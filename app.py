@@ -23,8 +23,8 @@ def summarize_text(text):
     if not text or len(text.strip()) == 0:
         return "لا يوجد نص كافي للتلخيص."
     sentences = text.replace('\n', ' ').split('.')
-    sentences = [s for s in sentences if len(s.strip()) > 5] # تجاهل الفراغات
-    summary = ". ".join(sentences[:min(len(sentences), 5)]) # أخذ أهم 5 جمل
+    sentences = [s for s in sentences if len(s.strip()) > 5] 
+    summary = ". ".join(sentences[:min(len(sentences), 5)]) 
     return summary if len(sentences) > 3 else text
 
 # دالة تصدير ملف الوورد
@@ -67,7 +67,7 @@ if uploaded_file is not None:
         except Exception as e:
             st.error(f"حدث خطأ تقني أثناء محاولة فتح الملف: {e}")
 
-        # عرض النتائج إذا تم إيجاد نص
+        # عرض النتائج
         if extracted_text and extracted_text.strip():
             col1, col2 = st.columns(2)
             
@@ -99,11 +99,9 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
         else:
-            # رسالة ذكية إذا كان الـ PDF عبارة عن صور وليس نصاً
-            st.warning("⚠️ تم رفع الملف، لكن يبدو أنه 'صورة ممسوحة ضوئياً' داخل PDF أو أنه لا يحتوي على نصوص واضحة. يرجى تصوير الورقة ورفعها كـ 'صورة' عادية بدلاً من PDF لكي يقرأها الذكاء الاصطناعي.")
+            st.warning("⚠️ الملف لا يحتوي على نصوص واضحة. إذا كان الـ PDF عبارة عن صور، يرجى رفعها كصور عادية.")
 else:
-    st.info("👈 ابدأ العمل برفع ملفك من القائمة الجانبية.")
-    summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+    st.info("👈 ابدأ العمل برفع ملفك من القائمة الجانبية.")    summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
     translator = Translator()
     return reader, summarizer, translator
 
@@ -276,4 +274,5 @@ else:
     st.markdown("<p style='text-align: center; color: #adb5bd;'>ارفع محاضراتك بصيغة PDF, Word, PowerPoint أو حتى صور الملازم.</p>", unsafe_allow_html=True)
 
     
+
 
