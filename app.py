@@ -1,39 +1,108 @@
-import sys
-# حل مشكلة توافق الإصدار الجديد من بايثون
-try:
-    import cgi
-except ImportError:
-    try:
-        import legacy_cgi as cgi
-        sys.modules['cgi'] = cgi
-    except ImportError:
-        pass
-
 import streamlit as st
 import easyocr
+import pdfplumber
 from PIL import Image
 import numpy as np
 from googletrans import Translator
-from transformers import pipeline
-import io
-import PyPDF2
-import docx
-from pptx import Presentation
+from docx import Document
+from io import BytesIO
 
-# --- إعدادات الواجهة ---
-st.set_page_config(page_title="UniBrain Pro Max", page_icon="🎓", layout="wide")
+# إعداد واجهة التطبيق
+st.set_page_config(page_title="UniBrain Pro Max", layout="wide")
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #f8f9fa; }
-    .stButton>button { border-radius: 8px; background-color: #0d6efd; color: white; width: 100%; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- تحميل المحركات ---
+# تحميل الذكاء الاصطناعي للصور مرة واحدة لتسريع التطبيق
 @st.cache_resource
-def load_models():
-    reader = easyocr.Reader(['ar', 'en'], gpu=False)
+def load_ocr():
+    return easyocr.Reader(['ar', 'en'])
+
+reader = load_ocr()
+translator = Translator()
+
+# دالة التلخيص الذكية (سريعة وتناسب السيرفر المجاني)
+def summarize_text(text):
+    if not text or len(text.strip()) == 0:
+        return "لا يوجد نص كافي للتلخيص."
+    sentences = text.replace('\n', ' ').split('.')
+    sentences = [s for s in sentences if len(s.strip()) > 5] # تجاهل الفراغات
+    summary = ". ".join(sentences[:min(len(sentences), 5)]) # أخذ أهم 5 جمل
+    return summary if len(sentences) > 3 else text
+
+# دالة تصدير ملف الوورد
+def create_docx(text):
+    doc = Document()
+    doc.add_paragraph(text)
+    bio = BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+# تصميم الواجهة الرئيسية
+st.title("🧠 UniBrain Pro Max")
+st.markdown("### المساعد الذكي المتكامل للطلاب")
+
+with st.sidebar:
+    st.header("📂 لوحة التحكم")
+    uploaded_file = st.file_uploader("ارفع (ملف PDF أو صورة)", type=['pdf', 'png', 'jpg', 'jpeg'])
+
+# عند رفع الملف يبدأ العمل:
+if uploaded_file is not None:
+    with st.spinner('جاري قراءة الملف واستخراج البيانات...'):
+        extracted_text = ""
+        
+        try:
+            # 1. إذا كان الملف PDF
+            if uploaded_file.type == "application/pdf":
+                with pdfplumber.open(uploaded_file) as pdf:
+                    for page in pdf.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            extracted_text += page_text + "\n"
+            
+            # 2. إذا كان الملف صورة (ملزمة)
+            else:
+                image = Image.open(uploaded_file)
+                image_np = np.array(image)
+                results = reader.readtext(image_np)
+                extracted_text = " ".join([res[1] for res in results])
+                
+        except Exception as e:
+            st.error(f"حدث خطأ تقني أثناء محاولة فتح الملف: {e}")
+
+        # عرض النتائج إذا تم إيجاد نص
+        if extracted_text and extracted_text.strip():
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.success("✅ النص المستخرج")
+                st.text_area("النص الكامل (يمكنك التعديل عليه):", extracted_text, height=300)
+            
+            with col2:
+                st.info("📝 الملخص")
+                summary = summarize_text(extracted_text)
+                st.write(summary)
+                
+                # زر الترجمة
+                if st.button("ترجم الملخص للعربية 🌐"):
+                    try:
+                        translated = translator.translate(summary, dest='ar').text
+                        st.success("**الترجمة:**")
+                        st.write(translated)
+                    except Exception as e:
+                        st.error("خدمة الترجمة تواجه ضغطاً حالياً، حاول مجدداً.")
+
+            # زر تحميل Word
+            st.divider()
+            docx_file = create_docx(extracted_text)
+            st.download_button(
+                label="📥 تحميل النص كملف Word",
+                data=docx_file,
+                file_name="UniBrain_Result.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        else:
+            # رسالة ذكية إذا كان الـ PDF عبارة عن صور وليس نصاً
+            st.warning("⚠️ تم رفع الملف، لكن يبدو أنه 'صورة ممسوحة ضوئياً' داخل PDF أو أنه لا يحتوي على نصوص واضحة. يرجى تصوير الورقة ورفعها كـ 'صورة' عادية بدلاً من PDF لكي يقرأها الذكاء الاصطناعي.")
+else:
+    st.info("👈 ابدأ العمل برفع ملفك من القائمة الجانبية.")
     summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
     translator = Translator()
     return reader, summarizer, translator
@@ -207,3 +276,4 @@ else:
     st.markdown("<p style='text-align: center; color: #adb5bd;'>ارفع محاضراتك بصيغة PDF, Word, PowerPoint أو حتى صور الملازم.</p>", unsafe_allow_html=True)
 
     
+
