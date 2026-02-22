@@ -1,8 +1,10 @@
 streamlit
 easyocr
 pdfplumber
-googletrans==4.0.0-rc1
+python-docx
+python-pptx
 pillow
 numpy
-opencv-python-headless
-python-docx
+googletrans==4.0.0-rc1
+transformers
+torch
