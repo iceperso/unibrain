@@ -1,39 +1,154 @@
 import streamlit as st
 import easyocr
-import pdfplumber
-from PIL import Image
 import numpy as np
-from googletrans import Translator
+import pdfplumber
+import docx
 from docx import Document
-from io import BytesIO
+from pptx import Presentation
+from PIL import Image
+from googletrans import Translator
+from transformers import pipeline
+import io
 
-# إعداد واجهة التطبيق
-st.set_page_config(page_title="UniBrain Pro Max", layout="wide")
+# --- 1. إعدادات الصفحة ---
+st.set_page_config(page_title="UniBrain Pro Max", layout="wide", page_icon="🧠")
 
-# تحميل الذكاء الاصطناعي للصور مرة واحدة لتسريع التطبيق
+# --- 2. تحميل النماذج (مع التخزين المؤقت لتسريع الأداء) ---
 @st.cache_resource
-def load_ocr():
-    return easyocr.Reader(['ar', 'en'])
+def load_models():
+    # تحميل محرك قراءة الصور
+    reader = easyocr.Reader(['ar', 'en'])
+    # تحميل نموذج التلخيص (اختياري: يمكن استخدام نموذج أصغر إذا كان السيرفر ضعيفاً)
+    summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+    # محرك الترجمة
+    translator = Translator()
+    return reader, summarizer, translator
 
-reader = load_ocr()
-translator = Translator()
+reader, summarizer, translator = load_models()
 
-# دالة التلخيص الذكية (سريعة وتناسب السيرفر المجاني)
-def summarize_text(text):
-    if not text or len(text.strip()) == 0:
-        return "لا يوجد نص كافي للتلخيص."
-    sentences = text.replace('\n', ' ').split('.')
-    sentences = [s for s in sentences if len(s.strip()) > 5] 
-    summary = ". ".join(sentences[:min(len(sentences), 5)]) 
-    return summary if len(sentences) > 3 else text
+# --- 3. الدوال المساعدة ---
 
-# دالة تصدير ملف الوورد
-def create_docx(text):
+def extract_text(file):
+    """دالة ذكية لاستخراج النص بناءً على نوع الملف"""
+    text = ""
+    file_name = file.name.lower()
+    
+    try:
+        if file_name.endswith(('png', 'jpg', 'jpeg')):
+            img = Image.open(file)
+            res = reader.readtext(np.array(img), detail=0)
+            text = " ".join(res)
+            
+        elif file_name.endswith('pdf'):
+            with pdfplumber.open(file) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                
+        elif file_name.endswith('docx'):
+            doc = docx.Document(file)
+            for para in doc.paragraphs:
+                text += para.text + "\n"
+                
+        elif file_name.endswith('pptx'):
+            prs = Presentation(file)
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        text += shape.text + "\n"
+    except Exception as e:
+        st.error(f"حدث خطأ أثناء قراءة الملف {file_name}: {e}")
+        
+    return text
+
+def create_word_file(text, title="UniBrain Document"):
+    """تحويل النص إلى ملف Word"""
     doc = Document()
+    doc.add_heading(title, 0)
     doc.add_paragraph(text)
-    bio = BytesIO()
+    bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
+
+# --- 4. واجهة التطبيق الرئيسية ---
+
+st.title("🧠 UniBrain Pro Max")
+st.markdown("### المساعد الأكاديمي الذكي المتكامل")
+
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3143/3143460.png", width=80)
+    st.header("📂 لوحة التحكم")
+    uploaded_files = st.file_uploader(
+        "ارفع ملفاتك (صور، PDF، Word، PPT)", 
+        type=['png', 'jpg', 'jpeg', 'pdf', 'docx', 'pptx'], 
+        accept_multiple_files=True
+    )
+    st.info("يدعم استخراج النصوص، التلخيص، والترجمة.")
+
+# --- 5. منطق العمل ---
+
+if uploaded_files:
+    # دمج النصوص من جميع الملفات المرفوعة
+    if 'full_text' not in st.session_state or st.session_state.get('last_files_count') != len(uploaded_files):
+        combined_text = ""
+        with st.spinner('جاري معالجة الملفات...'):
+            for file in uploaded_files:
+                combined_text += f"\n--- محتوى {file.name} ---\n"
+                combined_text += extract_text(file)
+        st.session_state.full_text = combined_text
+        st.session_state.last_files_count = len(uploaded_files)
+
+    # تقسيم الواجهة إلى تبويبات
+    tab1, tab2, tab3 = st.tabs(["📄 النصوص المستخرجة", "🧠 التلخيص الذكي", "🌐 الترجمة"])
+
+    with tab1:
+        st.subheader("النص المستخرج")
+        edited_text = st.text_area("يمكنك تعديل النص هنا:", st.session_state.full_text, height=400)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "💾 تحميل كملف Text", 
+                data=edited_text, 
+                file_name="UniBrain_Extract.txt"
+            )
+        with col2:
+            word_data = create_word_file(edited_text)
+            st.download_button(
+                "📝 تحميل كملف Word", 
+                data=word_data, 
+                file_name="UniBrain_Extract.docx"
+            )
+
+    with tab2:
+        st.subheader("تلخيص المحتوى بالذكاء الاصطناعي")
+        if st.button("بدء التلخيص"):
+            if len(edited_text.strip()) > 50:
+                with st.spinner("جاري التحليل..."):
+                    # أخذ أول 2000 حرف لتجنب بطء السيرفر
+                    input_text = edited_text[:2000]
+                    summary = summarizer(input_text, max_length=150, min_length=50, do_sample=False)
+                    summary_result = summary[0]['summary_text']
+                    st.success("الخلاصة:")
+                    st.write(summary_result)
+            else:
+                st.warning("النص قصير جداً للتلخيص.")
+
+    with tab3:
+        st.subheader("الترجمة الأكاديمية")
+        target_lang = st.radio("اختر اللغة المستهدفة:", ["العربية", "English"])
+        if st.button("ترجم الآن"):
+            with st.spinner("جاري الترجمة..."):
+                dest = 'ar' if target_lang == "العربية" else 'en'
+                # الترجمة بحد أقصى 3000 حرف لتجنب أخطاء المكتبة
+                translated = translator.translate(edited_text[:3000], dest=dest)
+                st.info(translated.text)
+
+else:
+    # شاشة الترحيب عند عدم رفع ملفات
+    st.markdown("---")
+    st.markdown("<h2 style='text-align: center; color: #6c757d;'>👈 ابدأ برفع ملفاتك من القائمة الجانبية</h2>", unsafe_allow_html=True)
 
 # تصميم الواجهة الرئيسية
 st.title("🧠 UniBrain Pro Max")
@@ -274,5 +389,6 @@ else:
     st.markdown("<p style='text-align: center; color: #adb5bd;'>ارفع محاضراتك بصيغة PDF, Word, PowerPoint أو حتى صور الملازم.</p>", unsafe_allow_html=True)
 
     
+
 
 
