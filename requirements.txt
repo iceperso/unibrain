@@ -1,0 +1,10 @@
+streamlit
+easyocr
+PyPDF2
+python-docx
+python-pptx
+googletrans==4.0.0-rc1
+transformers
+torch
+pillow
+numpy
