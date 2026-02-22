@@ -13,27 +13,127 @@ import io
 # --- 1. إعدادات الصفحة ---
 st.set_page_config(page_title="UniBrain Pro Max", layout="wide", page_icon="🧠")
 
-# --- 2. تحميل النماذج (مع التخزين المؤقت لتسريع الأداء) ---
+# --- 2. تحميل النماذج والذكاء الاصطناعي (مرة واحدة فقط) ---
 @st.cache_resource
-def load_models():
-    # تحميل محرك قراءة الصور
+def load_all_models():
+    # تحميل قارئ الصور
     reader = easyocr.Reader(['ar', 'en'])
-    # تحميل نموذج التلخيص (اختياري: يمكن استخدام نموذج أصغر إذا كان السيرفر ضعيفاً)
-    summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
-    # محرك الترجمة
+    # تحميل الملخص (استخدام نسخة خفيفة للسيرفرات المجانية)
+    summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+    # تحميل المترجم
     translator = Translator()
     return reader, summarizer, translator
 
-reader, summarizer, translator = load_models()
+# استدعاء النماذج
+try:
+    reader, summarizer, translator = load_all_models()
+except Exception as e:
+    st.error(f"فشل تحميل نماذج الذكاء الاصطناعي: {e}")
 
-# --- 3. الدوال المساعدة ---
+# --- 3. الدوال البرمجية (Functions) ---
 
-def extract_text(file):
-    """دالة ذكية لاستخراج النص بناءً على نوع الملف"""
+def extract_text_from_file(file):
+    """دالة واحدة لاستخراج النص من جميع أنواع الملفات"""
     text = ""
     file_name = file.name.lower()
-    
     try:
+        if file_name.endswith(('png', 'jpg', 'jpeg')):
+            img = Image.open(file)
+            res = reader.readtext(np.array(img), detail=0)
+            text = " ".join(res)
+        elif file_name.endswith('pdf'):
+            with pdfplumber.open(file) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text: text += page_text + "\n"
+        elif file_name.endswith('docx'):
+            doc = docx.Document(file)
+            for para in doc.paragraphs:
+                text += para.text + "\n"
+        elif file_name.endswith('pptx'):
+            prs = Presentation(file)
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        text += shape.text + "\n"
+    except Exception as e:
+        st.error(f"خطأ في قراءة {file_name}: {e}")
+    return text
+
+def create_docx_file(text):
+    """تحويل النص إلى ملف Word"""
+    doc = Document()
+    doc.add_paragraph(text)
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+# --- 4. واجهة المستخدم (UI) ---
+
+st.title("🧠 UniBrain Pro Max")
+st.markdown("---")
+
+with st.sidebar:
+    st.header("📂 رفع المحاضرات")
+    uploaded_files = st.file_uploader(
+        "اختر صوراً، ملفات PDF، Word أو PowerPoint", 
+        type=['png', 'jpg', 'jpeg', 'pdf', 'docx', 'pptx'], 
+        accept_multiple_files=True
+    )
+    st.write("---")
+    st.caption("برمجة وتطوير UniBrain AI")
+
+# --- 5. منطق المعالجة ---
+
+if uploaded_files:
+    # تخزين النص في 'session_state' لمنع إعادة المعالجة عند كل ضغطة زر
+    if 'combined_text' not in st.session_state or st.session_state.get('last_upload_id') != len(uploaded_files):
+        all_text = ""
+        with st.spinner('جاري استخراج النصوص من الملفات...'):
+            for f in uploaded_files:
+                all_text += f"\n\n--- ملف: {f.name} ---\n"
+                all_text += extract_text_from_file(f)
+        st.session_state.combined_text = all_text
+        st.session_state.last_upload_id = len(uploaded_files)
+
+    # عرض النتائج في تبويبات منظمة
+    tab_text, tab_ai, tab_trans = st.tabs(["📝 النص المستخرج", "🤖 تلخيص ذكي", "🌐 ترجمة"])
+
+    with tab_text:
+        st.subheader("مراجعة النص")
+        final_text = st.text_area("النص المستخرج (يمكنك التعديل):", st.session_state.combined_text, height=400)
+        
+        col_down1, col_down2 = st.columns(2)
+        with col_down1:
+            st.download_button("📥 تحميل كملف Word", data=create_docx_file(final_text), file_name="UniBrain_Text.docx")
+        with col_down2:
+            st.download_button("📥 تحميل كملف نصي TXT", data=final_text, file_name="UniBrain_Text.txt")
+
+    with tab_ai:
+        st.subheader("تلخيص المحتوى")
+        if st.button("توليد تلخيص"):
+            if len(final_text.strip()) > 100:
+                with st.spinner("جاري التلخيص..."):
+                    # نلخص أول 1500 حرف لضمان السرعة
+                    summary = summarizer(final_text[:1500], max_length=150, min_length=40, do_sample=False)
+                    st.success("الخلاصة:")
+                    st.write(summary[0]['summary_text'])
+            else:
+                st.warning("النص قصير جداً للتلخيص.")
+
+    with tab_trans:
+        st.subheader("الترجمة")
+        target_lang = st.selectbox("اختر اللغة:", ["العربية", "English"])
+        if st.button("بدء الترجمة"):
+            with st.spinner("جاري الترجمة..."):
+                lang_code = 'ar' if target_lang == "العربية" else 'en'
+                translated = translator.translate(final_text[:2000], dest=lang_code)
+                st.info(translated.text)
+
+else:
+    # شاشة الترحيب
+    st.info("👈 ابدأ العمل برفع ملفاتك من القائمة الجانبية.")
+    st.image("https://cdn-icons-png.flaticon.com/512/2991/2991148.png", width=100)
         if file_name.endswith(('png', 'jpg', 'jpeg')):
             img = Image.open(file)
             res = reader.readtext(np.array(img), detail=0)
@@ -504,6 +604,7 @@ else:
     st.markdown("<p style='text-align: center; color: #adb5bd;'>ارفع محاضراتك بصيغة PDF, Word, PowerPoint أو حتى صور الملازم.</p>", unsafe_allow_html=True)
 
     
+
 
 
 
