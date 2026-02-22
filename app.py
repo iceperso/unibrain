@@ -1,29 +1,36 @@
+import sys
+# حل مشكلة توافق الإصدار الجديد من بايثون
+try:
+    import cgi
+except ImportError:
+    try:
+        import legacy_cgi as cgi
+        sys.modules['cgi'] = cgi
+    except ImportError:
+        pass
+
 import streamlit as st
 import easyocr
 from PIL import Image
 import numpy as np
 from googletrans import Translator
 from transformers import pipeline
-import random
 import io
-
-# --- استدعاء مكتبات الملفات ---
 import PyPDF2
 import docx
 from pptx import Presentation
 
-# --- 1. إعدادات الواجهة ---
+# --- إعدادات الواجهة ---
 st.set_page_config(page_title="UniBrain Pro Max", page_icon="🎓", layout="wide")
 
 st.markdown("""
     <style>
-    .stApp { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .stApp { background-color: #f8f9fa; }
     .stButton>button { border-radius: 8px; background-color: #0d6efd; color: white; width: 100%; }
-    .stButton>button:hover { background-color: #0b5ed7; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. تحميل المحركات ---
+# --- تحميل المحركات ---
 @st.cache_resource
 def load_models():
     reader = easyocr.Reader(['ar', 'en'], gpu=False)
@@ -33,7 +40,52 @@ def load_models():
 
 reader, summarizer, translator = load_models()
 
-# --- 3. دوال التعامل مع الملفات (Import & Export) ---
+# --- دوال الملفات ---
+def extract_text(file, file_name):
+    text = ""
+    ext = file_name.split('.')[-1].lower()
+    if ext in ['png', 'jpg', 'jpeg']:
+        img = Image.open(file)
+        res = reader.readtext(np.array(img), detail=0)
+        text = " ".join(res)
+    elif ext == 'pdf':
+        pdf_reader = PyPDF2.PdfReader(file)
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+    elif ext == 'docx':
+        doc = docx.Document(file)
+        for para in doc.paragraphs:
+            text += para.text + "\n"
+    elif ext == 'pptx':
+        prs = Presentation(file)
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    text += shape.text + "\n"
+    return text
+
+# --- واجهة التطبيق ---
+with st.sidebar:
+    st.title("UniBrain Pro Max")
+    uploaded_files = st.file_uploader("📂 ارفع ملفاتك (صور، PDF، Word، PPT)", 
+                                      type=['png', 'jpg', 'jpeg', 'pdf', 'docx', 'pptx'], 
+                                      accept_multiple_files=True)
+
+if uploaded_files:
+    if 'full_text' not in st.session_state:
+        st.session_state.full_text = ""
+        for file in uploaded_files:
+            st.session_state.full_text += extract_text(file, file.name)
+
+    tab1, tab2 = st.tabs(["📝 النص", "🤖 الذكاء الاصطناعي"])
+    with tab1:
+        st.text_area("المحتوى:", st.session_state.full_text, height=400)
+    with tab2:
+        if st.button("تلخيص المحتوى"):
+            summary = summarizer(st.session_state.full_text[:1024], max_length=150, min_length=50, do_sample=False)
+            st.success(summary[0]['summary_text'])
+else:
+    st.info("ارفع ملفاتك من القائمة الجانبية للبدء.")
 
 def extract_text(file, file_name):
     """دالة ذكية تتعرف على نوع الملف وتستخرج النص منه"""
@@ -153,4 +205,5 @@ else:
     # شاشة الترحيب
     st.markdown("<br><br><h2 style='text-align: center; color: #6c757d;'>👈 ابدأ برفع ملفاتك من القائمة الجانبية</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #adb5bd;'>ارفع محاضراتك بصيغة PDF, Word, PowerPoint أو حتى صور الملازم.</p>", unsafe_allow_html=True)
+
     
